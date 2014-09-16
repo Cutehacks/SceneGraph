@@ -1,3 +1,10 @@
+/****************************************************************************
+**
+** Copyright (C) 2014 Cutehacks AS.
+** Contact: http://www.cutehacks.com/contact
+**
+****************************************************************************/
+
 #ifndef SCENEGRAPH_H
 #define SCENEGRAPH_H
 
@@ -6,7 +13,7 @@
 
 #include "rasterizer.h"
 
-#define degreesToRadians(degrees) (degrees * M_PI / 180.0)
+inline static float sg_degreesToRadians(float degrees) { return (degrees * M_PI / 180.0); }
 
 namespace SceneGraph {
 
@@ -24,6 +31,7 @@ namespace SceneGraph {
 
         // matrix stack
         void pushMatrix();
+        void pushIdentityMatrix();
         void multiplyMatrix(const float *matrix);
         void popMatrix();
         const float *currentMatrix();
