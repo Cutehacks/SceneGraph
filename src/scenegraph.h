@@ -1,3 +1,10 @@
+/****************************************************************************
+**
+** Copyright (C) 2014 Cutehacks AS.
+** Contact: http://www.cutehacks.com/contact
+**
+****************************************************************************/
+
 #ifndef SCENEGRAPH_H
 #define SCENEGRAPH_H
 
@@ -22,6 +29,7 @@ namespace SceneGraph {
 
         // matrix stack
         void pushMatrix();
+        void pushIdentityMatrix();
         void multiplyMatrix(const float *matrix);
         void popMatrix();
         const float *currentMatrix();

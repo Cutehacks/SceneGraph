@@ -1,3 +1,10 @@
+/****************************************************************************
+**
+** Copyright (C) 2014 Cutehacks AS.
+** Contact: http://www.cutehacks.com/contact
+**
+****************************************************************************/
+
 #ifndef RASTERIZER_H
 #define RASTERIZER_H
 

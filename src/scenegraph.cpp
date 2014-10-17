@@ -1,3 +1,10 @@
+/****************************************************************************
+**
+** Copyright (C) 2014 Cutehacks AS.
+** Contact: http://www.cutehacks.com/contact
+**
+****************************************************************************/
+
 #include "scenegraph.h"
 #include "mathematics.h"
 #include <stdlib.h>
@@ -57,6 +64,13 @@ void State::pushMatrix()
 {
     float *matrix = new float[16];
     memcpy(matrix, m_matrices.top(), sizeof(float) * 16);
+    m_matrices.push(matrix);
+}
+
+void State::pushIdentityMatrix()
+{
+    float *matrix = new float[16];
+    memcpy(matrix, identity_matrix, sizeof(float) * 16);
     m_matrices.push(matrix);
 }
 
