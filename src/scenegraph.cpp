@@ -1,79 +1,10 @@
 #include "scenegraph.h"
-#include <math.h>
+#include "mathematics.h"
 #include <stdlib.h>
 
 using namespace SceneGraph;
 
 // API
-
-static inline float dot_vectors(const float *a, const float *b)
-{
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static inline void multiply_matrices(const float *a, const float *b, float *r)
-{
-    for (int i = 0; i < 16; i += 4)
-        for (int j = 0; j < 4; ++j)
-            r[i+j] = b[i]*a[j] + b[i+1]*a[j+4] + b[i+2]*a[j+8] + b[i+3]*a[j+12];
-}
-
-static inline void multiply_quaternions(const float *a, const float *b, float *r)
-{
-    float w = a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3];
-    float x = a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2];
-    float y = a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1];
-    float z = a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0];
-    r[0] = w; r[1] = x; r[2] = y; r[3] = z;
-}
-
-static inline void quaternion_rotate_vector(const float *quaternion, const float *vector, float *result)
-{
-    float vector_quaternion[] = { 0.0, vector[0], vector[1], vector[2], vector[3] };
-    float conjugated_quaternion[] = { quaternion[0], -quaternion[1], -quaternion[2], -quaternion[3] };
-
-    multiply_quaternions(quaternion, vector_quaternion, vector_quaternion);
-    multiply_quaternions(vector_quaternion, conjugated_quaternion, vector_quaternion);
-
-    result[0] = vector_quaternion[1];
-    result[1] = vector_quaternion[2];
-    result[2] = vector_quaternion[3];
-}
-
-static inline void quaternion_rotation_matrix(const float *quaternion, float *matrix)
-{
-    float x_axis[] = { 1.0, 0.0, 0.0 };
-    float y_axis[] = { 0.0, 1.0, 0.0 };
-    float z_axis[] = { 0.0, 0.0, 1.0 };
-
-    float x_rotated[3];
-    float y_rotated[3];
-    float z_rotated[3];
-
-    quaternion_rotate_vector(quaternion, x_axis, x_rotated);
-    quaternion_rotate_vector(quaternion, y_axis, y_rotated);
-    quaternion_rotate_vector(quaternion, z_axis, z_rotated);
-
-    matrix[0] = dot_vectors(x_axis, x_rotated);
-    matrix[1] = dot_vectors(y_axis, x_rotated);
-    matrix[2] = dot_vectors(z_axis, x_rotated);
-    matrix[3] = 0;
-
-    matrix[4] = dot_vectors(x_axis, y_rotated);
-    matrix[5] = dot_vectors(y_axis, y_rotated);
-    matrix[6] = dot_vectors(z_axis, y_rotated);
-    matrix[7] = 0;
-
-    matrix[8] = dot_vectors(x_axis, z_rotated);
-    matrix[9] = dot_vectors(y_axis, z_rotated);
-    matrix[10] = dot_vectors(z_axis, z_rotated);
-    matrix[11] = 0;
-
-    matrix[12] = 0;
-    matrix[13] = 0;
-    matrix[14] = 0;
-    matrix[15] = 1;
-}
 
 static const float identity_matrix[16] = {
     1, 0, 0, 0,
@@ -111,11 +42,13 @@ void State::execute(Node *node)
 {
     if (node->enabled(this)) {
         node->prepare(this);
+        node->update(this);
         node->execute(this);
-        node->animate(this);
-        std::list<Node*>::const_iterator it = node->m_children.begin();
-        for (; it != node->m_children.end(); ++it)
-            execute(*it);
+        if (node->visible(this)) {
+            std::list<Node*>::const_iterator it = node->m_children.begin();
+            for (; it != node->m_children.end(); ++it)
+                execute(*it);
+        }
         node->cleanup(this);
     }
 }
@@ -149,22 +82,21 @@ void State::setOrtographicProjection(float left, float right,
                                      float bottom, float top,
                                      float near, float far)
 {
-#if 1
     float m[] = {
         2 / (right - left), 0, 0, -((right + left) / (right - left)),
         0, 2 / (top - bottom), 0, -((top + bottom) / (top - bottom)),
         0, 0, -2 / (far - near), -((far + near) / (far - near)),
         0, 0, 0, 1
     };
-#else
-    float m[] = {
-       2 / (right - left), 0, 0, ((right + left) / (right - left)),
-       0, 2 / (top - bottom), 0, ((top + bottom) / (top - bottom)),
-       0, 0, 2 / (near - far), ((far + near) / (far - near)),
-       0, 0, 0, 1
-    };
-#endif
     setProjectionMatrix(m);
+}
+
+void State::setOrtographicProjectionEx(float aspect, float fov_y,
+                                       float near, float far)
+{
+    float top = -near * tanf(fov_y / 2.0); // NOTE: reverse negative
+    float right = aspect * top;
+    setOrtographicProjection(-right, right, top, -top, near, far);
 }
 
 void State::setPerspectiveProjection(float left, float right,
@@ -241,11 +173,16 @@ void Node::execute(State *)
 {
 }
 
+bool Node::visible(State *)
+{
+    return true;
+}
+
 void Node::cleanup(State *)
 {
 }
 
-void Node::animate(State *)
+void Node::update(State *)
 {
 }
 
@@ -376,79 +313,81 @@ Shader::Shader(const char *vertex_source,
                unsigned int attributes,
                Node *parent)
     : Node(parent),
-      m_vertex_shader(0),
-      m_fragment_shader(0),
       m_program(0),
-      m_old_program(0)
+      m_old_program(0),
+      m_owner(false)
 {
     initialize(vertex_source, fragment_source, uniforms, attributes);
 }
 
-Shader::Shader(Node *parent)
+Shader::Shader(Shader *other, Node *parent)
     : Node(parent),
-      m_vertex_shader(0),
-      m_fragment_shader(0),
-      m_program(0),
-      m_old_program(0) {}
+      m_program(other ? other->m_program : 0),
+      m_old_program(0),
+      m_uniforms(other ? other->m_uniforms : 0),
+      m_owner(false)
+{
+}
 
 Shader::~Shader()
 {
-    glDeleteProgram(m_program);
-    glDeleteShader(m_vertex_shader);
-    glDeleteShader(m_fragment_shader);
+    if (m_owner)
+        glDeleteProgram(m_program);
 }
 
-void Shader::initialize(const char *vertex_source,
+bool Shader::initialize(const char *vertex_source,
                         const char *fragment_source,
                         unsigned int uniforms,
                         unsigned int attributes)
 {
+    m_owner = true;
     m_uniforms = uniforms;
-    m_attributes = attributes;
 
     GLint compile_ok = GL_FALSE;
     GLint link_ok = GL_FALSE;
+    GLuint vertex_shader = 0;
+    GLuint fragment_shader = 0;
 
-   if (vertex_source) {
-       m_vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-       glShaderSource(m_vertex_shader, 1, &vertex_source, 0);
-       glCompileShader(m_vertex_shader);
-       glGetShaderiv(m_vertex_shader, GL_COMPILE_STATUS, &compile_ok);
+    if (vertex_source) {
+       vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+       glShaderSource(vertex_shader, 1, &vertex_source, 0);
+       glCompileShader(vertex_shader);
+       glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &compile_ok);
        if (!compile_ok) {
            GLint logLen;
-           glGetShaderiv(m_vertex_shader, GL_INFO_LOG_LENGTH, &logLen);
+           glGetShaderiv(vertex_shader, GL_INFO_LOG_LENGTH, &logLen);
            if (logLen > 0) {
                GLchar *log = (GLchar *)malloc(logLen);
-               glGetShaderInfoLog(m_vertex_shader, logLen, &logLen, log);
+               glGetShaderInfoLog(vertex_shader, logLen, &logLen, log);
                fprintf(stderr, "Vertex shader info log: %s\n", log);
                free(log);
            }
        }
-   }
+    }
 
-   if (fragment_source) {
-       m_fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-       glShaderSource(m_fragment_shader, 1, &fragment_source, 0);
-       glCompileShader(m_fragment_shader);
-       glGetShaderiv(m_fragment_shader, GL_COMPILE_STATUS, &compile_ok);
+    if (fragment_source) {
+       fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+       glShaderSource(fragment_shader, 1, &fragment_source, 0);
+       glCompileShader(fragment_shader);
+       glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &compile_ok);
        if (!compile_ok) {
          GLint logLen;
-         glGetShaderiv(m_fragment_shader, GL_INFO_LOG_LENGTH, &logLen);
+         glGetShaderiv(fragment_shader, GL_INFO_LOG_LENGTH, &logLen);
          if (logLen > 0) {
              GLchar *log = (GLchar *)malloc(logLen);
-             glGetShaderInfoLog(m_fragment_shader, logLen, &logLen, log);
+             glGetShaderInfoLog(fragment_shader, logLen, &logLen, log);
              fprintf(stderr, "Fragment shader info log: %s\n", log);
              free(log);
          }
        }
-   }
+    }
 
-   m_program = glCreateProgram();
-   glAttachShader(m_program, m_vertex_shader);
-   glAttachShader(m_program, m_fragment_shader);
-   glLinkProgram(m_program);
-   glGetProgramiv(m_program, GL_LINK_STATUS, &link_ok);
-   if (!link_ok) {
+    m_program = glCreateProgram();
+    glAttachShader(m_program, vertex_shader);
+    glAttachShader(m_program, fragment_shader);
+    glLinkProgram(m_program);
+    glGetProgramiv(m_program, GL_LINK_STATUS, &link_ok);
+    if (!link_ok) {
         GLint logLen;
         glGetProgramiv(m_program, GL_INFO_LOG_LENGTH, &logLen);
         if (logLen > 0) {
@@ -457,26 +396,39 @@ void Shader::initialize(const char *vertex_source,
             fprintf(stderr, "Shader program info log: %s\n", log);
             free(log);
         }
-   }
+    }
+
     glValidateProgram(m_program);
 
-    if (m_attributes & PositionAttribute) {
+    if (attributes & PositionAttribute) {
         GLint position_attrib = glGetAttribLocation(m_program, Shader::position_attribute_name);
         if (position_attrib == -1)
             fprintf(stderr, "Could not bind attribute %s\n", Shader::position_attribute_name);
     }
 
-    if (m_attributes & NormalAttribute) {
+    if (attributes & NormalAttribute) {
         GLint normal_attrib = glGetAttribLocation(m_program, Shader::normal_attribute_name);
         if (normal_attrib == -1)
             fprintf(stderr, "Could not bind attribute %s\n", Shader::normal_attribute_name);
     }
 
-    if (m_attributes & TexuvAttribute) {
+    if (attributes & TexuvAttribute) {
         GLint texuv_attrib = glGetAttribLocation(m_program, Shader::texuv_attribute_name);
         if (texuv_attrib == -1)
             fprintf(stderr, "Could not bind attribute %s\n", Shader::texuv_attribute_name);
     }
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    if (!compile_ok || !link_ok) {
+        glDeleteProgram(m_program);
+        m_program = 0;
+        m_owner = false;
+        return false;
+    }
+
+    return true;
 }
 
 void Shader::prepare(State *)
@@ -486,7 +438,8 @@ void Shader::prepare(State *)
 
 void Shader::execute(State *state)
 {
-    glUseProgram(m_program);
+    if (m_old_program != m_program)
+        glUseProgram(m_program);
     if (m_uniforms & ProjectionModelViewUniform) {
         float mvp_matrix[16];
         multiply_matrices(state->projectionMatrix(), state->currentMatrix(), mvp_matrix);
@@ -499,43 +452,48 @@ void Shader::execute(State *state)
 
 void Shader::cleanup(State *)
 {
-    glUseProgram(m_old_program);
+    if (m_old_program != m_program)
+        glUseProgram(m_old_program);
 }
 
-void Shader::setUniform1i(const char *name, int value)
+bool Shader::setUniform1i(const char *name, int value)
 {
     GLint location = glGetUniformLocation(m_program, name);
     if (location < 0)
         fprintf(stderr, "Could not transfer uniform %s\n", name);
     else
         glUniform1i(location, value);
+    return location >= 0;
 }
 
-void Shader::setUniform1f(const char *name, float value)
+bool Shader::setUniform1f(const char *name, float value)
 {
     GLint location = glGetUniformLocation(m_program, name);
     if (location < 0)
         fprintf(stderr, "Could not transfer uniform %s\n", name);
     else
         glUniform1f(location, value);
+    return location >= 0;
 }
 
-void Shader::setUniform2fv(const char *name, int count, const float *vector)
+bool Shader::setUniform2fv(const char *name, int count, const float *vector)
 {
     GLint location = glGetUniformLocation(m_program, name);
     if (location < 0)
         fprintf(stderr, "Could not transfer uniform %s\n", name);
     else
         glUniform2fv(location, count, vector);
+    return location >= 0;
 }
 
-void Shader::setUniformMatrix4fv(const char *name, const float *matrix, bool transpose)
+bool Shader::setUniformMatrix4fv(const char *name, const float *matrix, bool transpose)
 {
     GLint location = glGetUniformLocation(m_program, name);
     if (location < 0)
         fprintf(stderr, "Could not transfer uniform %s\n", name);
     else
         glUniformMatrix4fv(location, 1, transpose, matrix);
+    return location >= 0;
 }
 
 SceneGraph::Shader *Shader::createDefault(Node *parent)
@@ -549,21 +507,29 @@ SceneGraph::Shader *Shader::createDefault(Node *parent)
 
 // Texture2D
 
-Texture2D::Texture2D(int width, int height, int format, const void *bits, int unit, Node *parent)
-    : Node(parent), m_id(0), m_unit(0)
+Texture2D::Texture2D(GLuint width, GLuint height, GLuint format, const GLvoid *bits, GLuint unit, Node *parent)
+    : Node(parent), m_id(0), m_unit(0), m_owner(false)
 {
     initialize(width, height, format, bits, unit);
 }
 
-Texture2D::Texture2D(Node *parent) : Node(parent), m_id(0), m_unit(0) {}
+Texture2D::Texture2D(Texture2D *other, Node *parent)
+    : Node(parent),
+      m_id(other ? other->m_id : 0),
+      m_unit(other ? other->m_unit : 0),
+      m_owner(false)
+{
+}
 
 Texture2D::~Texture2D()
 {
-    glDeleteTextures(1, &m_id);
+    if (m_owner)
+        glDeleteTextures(1, &m_id);
 }
 
-void Texture2D::initialize(int width, int height, int format, const void *bits, int unit)
+bool Texture2D::initialize(GLuint width, GLuint height, GLuint format, const GLvoid *bits, GLuint unit)
 {
+    m_owner = true;
     m_unit = unit;
 
     glGenTextures(1, &m_id);
@@ -583,6 +549,8 @@ void Texture2D::initialize(int width, int height, int format, const void *bits, 
     }*/
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, format, GL_UNSIGNED_BYTE, bits);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    return true;
 }
 
 void Texture2D::prepare(State *)
@@ -620,7 +588,7 @@ Mesh::Mesh(GLenum mode,
            const float *texuvs, unsigned int texuvs_size,
            const unsigned int *triangles, unsigned int triangles_size,
            Node *parent)
-   : Node(parent), m_elementCount(0), m_mode(0)
+   : Node(parent), m_mode(0), m_elementCount(0), m_owner(false)
 {
     initialize(mode,
                positions, positions_size,
@@ -629,21 +597,33 @@ Mesh::Mesh(GLenum mode,
                triangles, triangles_size);
 }
 
-Mesh::Mesh(Node *parent) : Node(parent), m_elementCount(0), m_mode(0) {}
+Mesh::Mesh(Mesh *other, Node *parent)
+    : Node(parent),
+      m_mode(other ? other->m_mode : 0),
+      m_elementCount(other ? other->m_elementCount : 0),
+      m_owner(false)
+{
+    if (other) {
+        m_ids[0] = other->m_ids[0];
+        m_ids[1] = other->m_ids[1];
+        m_ids[2] = other->m_ids[2];
+    }
+}
 
 Mesh::~Mesh()
 {
-    glDeleteBuffers(BufferCount, m_ids);
+    if (m_owner)
+        glDeleteBuffers(BufferCount, m_ids);
 }
 
-void Mesh::initialize(GLenum mode,
+bool Mesh::initialize(GLenum mode,
                       const float *positions, unsigned int positions_size,
                       //const float *normals, unsigned int normals_size,
                       const float *texuvs, unsigned int texuvs_size,
                       const unsigned int *triangles, unsigned int triangles_size)
 {
+    m_owner = true;
     m_mode = mode;
-    //m_vertexCount = (positions_size / sizeof(float));
     m_elementCount = ((triangles_size) / sizeof(unsigned int));
 
     glGenBuffers(BufferCount, m_ids);
@@ -667,6 +647,8 @@ void Mesh::initialize(GLenum mode,
     // unbind
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    return true;
 }
 
 void Mesh::execute(State *)

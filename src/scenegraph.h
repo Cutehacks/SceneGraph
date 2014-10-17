@@ -6,8 +6,6 @@
 
 #include "rasterizer.h"
 
-#define degreesToRadians(degrees) (degrees * M_PI / 180.0)
-
 namespace SceneGraph {
 
     class Node;
@@ -31,7 +29,9 @@ namespace SceneGraph {
         // projection
         void setOrtographicProjection(float left, float right,
                                       float bottom, float top,
-                                      float near = -100.0, float far = 100.0);
+                                      float near = -1.0, float far = 1.0);
+        void setOrtographicProjectionEx(float aspect, float fov_y,
+                                        float near = -1.0, float far = 1.0);
         void setPerspectiveProjection(float left, float right,
                                       float bottom, float top,
                                       float near = -1.0, float far = 1.0);
@@ -61,8 +61,12 @@ namespace SceneGraph {
         virtual bool enabled(State *state);
         virtual void prepare(State *state);
         virtual void execute(State *state);
+        virtual bool visible(State *state);
         virtual void cleanup(State *state);
-        virtual void animate(State *state);
+        virtual void update(State *state);
+
+   protected:
+        Rasterizer *m_rasterizer;
 
     private:
         Node *m_parent;
@@ -106,17 +110,17 @@ namespace SceneGraph {
                unsigned int uniforms = DefaultUniforms,
                unsigned int attributes = DefaultAttributes,
                Node *parent = 0);
-        Shader(Node *parent = 0);
+        Shader(Shader *other, Node *parent = 0);
         ~Shader();
 
         void prepare(State *state);
         void execute(State *state);
         void cleanup(State *state);
 
-        void setUniform1i(const char *name, int value);
-        void setUniform1f(const char *name, float value);
-        void setUniform2fv(const char *name, int count, const float *vector);
-        void setUniformMatrix4fv(const char *name, const float *matrix, bool transpose = false);
+        bool setUniform1i(const char *name, int value);
+        bool setUniform1f(const char *name, float value);
+        bool setUniform2fv(const char *name, int count, const float *vector);
+        bool setUniformMatrix4fv(const char *name, const float *matrix, bool transpose = false);
 
         static const char *default_vertex_shader;
         static const char *default_fragment_shader;
@@ -129,25 +133,23 @@ namespace SceneGraph {
         static Shader *createDefault(Node *parent = 0); // FIXME
 
     protected:
-        void initialize(const char *vertex_source,
+        bool initialize(const char *vertex_source,
                         const char *fragment_source,
                         unsigned int uniforms,
                         unsigned int attributes);
 
     private:
-        GLuint m_vertex_shader;
-        GLuint m_fragment_shader;
         GLuint m_program;
         GLuint m_old_program;
         unsigned int m_uniforms;
-        unsigned int m_attributes;
+        bool m_owner;
     };
 
     class Texture2D : public Node
     {
     public:
-        Texture2D(int width, int height, int format, const void *bits, int unit = 0, Node *parent = 0);
-        Texture2D(Node *parent = 0);
+        Texture2D(GLuint width, GLuint height, GLuint format, const GLvoid *bits, GLuint unit = 0, Node *parent = 0);
+        Texture2D(Texture2D *other, Node *parent = 0);
         ~Texture2D();
 
         void prepare(State *state);
@@ -155,13 +157,14 @@ namespace SceneGraph {
         void cleanup(State *state);
 
     protected:
-        void initialize(int width, int height, int format, const void *bits, int unit = 0);
+        bool initialize(GLuint width, GLuint height, GLuint format, const GLvoid *bits, GLuint unit = 0);
 
     private:
         GLuint m_id;
         GLuint m_old_id;
         GLuint m_unit;
         GLuint m_old_unit;
+        bool m_owner;
     };
 
     class Mesh : public Node
@@ -173,13 +176,13 @@ namespace SceneGraph {
              const float *texuvs, unsigned int texuvs_size,
              const unsigned int *triangles, unsigned int triangles_size,
              Node *parent = 0);
-        Mesh(Node *parent = 0);
+        Mesh(Mesh *other, Node *parent = 0);
         ~Mesh();
 
         void execute(State *state);
 
     protected:
-        void initialize(GLenum mode,
+        bool initialize(GLenum mode,
                         const float *positions, unsigned int positions_size,
                         //const float *normals, unsigned int normals_size,
                         const float *texuvs, unsigned int texuvs_size,
@@ -203,11 +206,12 @@ namespace SceneGraph {
             BufferCount = TriangleBuffer + 1
         };
 
+        GLenum m_mode;
         GLuint m_ids[3];
         GLuint m_elementCount;
-        GLenum m_mode;
+        bool m_owner;
     };
 
-}; // namespace
+}; // SceneGraph
 
 #endif//SCENEGRAPH_H
